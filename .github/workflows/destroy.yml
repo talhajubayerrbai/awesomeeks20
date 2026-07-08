@@ -33,6 +33,17 @@ jobs:
             -backend-config="region=${{ secrets.AWS_REGION }}" \
             -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate"
 
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ secrets.AWS_REGION }} \
+            --name ${{ secrets.PROJECT_NAME }}-cluster || true
+
+      - name: Delete Kubernetes Ingress before destroy
+        run: |
+          kubectl delete ingress -n app ${{ secrets.PROJECT_NAME }}-ingress --ignore-not-found=true --timeout=120s || true
+          sleep 30
+
       - name: Terraform Destroy
         working-directory: terraform
         run: |-
