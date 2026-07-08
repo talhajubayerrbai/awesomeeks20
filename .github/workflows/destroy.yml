@@ -39,10 +39,39 @@ jobs:
             --region ${{ secrets.AWS_REGION }} \
             --name ${{ secrets.PROJECT_NAME }}-cluster || true
 
-      - name: Delete Kubernetes Ingress before destroy
+      - name: Delete Kubernetes Ingress and remove finalizers before destroy
         run: |
-          kubectl delete ingress -n app ${{ secrets.PROJECT_NAME }}-ingress --ignore-not-found=true --timeout=120s || true
-          sleep 30
+          # Trigger deletion of the Ingress — this asks the ALB Controller to
+          # start deprovisioning the AWS ALB and remove its finalizer.
+          kubectl delete ingress -n app ${{ secrets.PROJECT_NAME }}-ingress \
+            --ignore-not-found=true --timeout=300s || true
+
+          # Wait up to 3 minutes for the ALB Controller to clean up and the
+          # Ingress to disappear on its own (happy path).
+          echo "Waiting for Ingress to be fully removed..."
+          for i in $(seq 1 18); do
+            if ! kubectl get ingress -n app ${{ secrets.PROJECT_NAME }}-ingress \
+                 --ignore-not-found 2>/dev/null | grep -q "${{ secrets.PROJECT_NAME }}-ingress"; then
+              echo "Ingress is gone."
+              break
+            fi
+            echo "Still present, waiting 10s... (attempt $i/18)"
+            sleep 10
+          done
+
+          # If the Ingress is still there (ALB Controller too slow or already
+          # gone), forcibly strip the finalizer so the object can be deleted.
+          # This is safe because we are about to destroy all AWS resources
+          # anyway — the ALB itself will be cleaned up via terraform destroy.
+          if kubectl get ingress -n app ${{ secrets.PROJECT_NAME }}-ingress \
+               --ignore-not-found 2>/dev/null | grep -q "${{ secrets.PROJECT_NAME }}-ingress"; then
+            echo "Ingress still present; forcibly removing finalizers..."
+            kubectl patch ingress ${{ secrets.PROJECT_NAME }}-ingress -n app \
+              --type=json \
+              -p='[{"op":"remove","path":"/metadata/finalizers"}]' || true
+            # Give Kubernetes a moment to process the patch and delete the object
+            sleep 10
+          fi
 
       - name: Terraform Destroy
         working-directory: terraform
