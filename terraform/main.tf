@@ -440,7 +440,7 @@ resource "aws_eks_cluster" "main" {
     subnet_ids              = [aws_subnet.private_a.id, aws_subnet.private_b.id]
     security_group_ids      = [aws_security_group.eks_cluster.id]
     endpoint_private_access = true
-    endpoint_public_access  = false
+    endpoint_public_access  = true
   }
 
   depends_on = [
