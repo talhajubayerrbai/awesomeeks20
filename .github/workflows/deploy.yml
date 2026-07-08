@@ -34,18 +34,15 @@ jobs:
         run: |
           pip install flake8 || true
           flake8 . --max-line-length=120 --extend-ignore=E302,E303,W503 || true
+        continue-on-error: true
 
   # 
   # BUILD - Docker image build & push to ECR
   # 
-        continue-on-error: true
   build:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
     needs: [test]
-
-    outputs:
-      image_uri: ${{ steps.build_push.outputs.image_uri }}
 
     steps:
       - name: Checkout
@@ -92,7 +89,6 @@ jobs:
           IMAGE_URI="${REGISTRY}/${REPO}:${TAG}"
           docker build -t "${IMAGE_URI}" .
           docker push "${IMAGE_URI}"
-          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
   # 
   # PROVISION - Terraform (VPC, EKS, ALB, K8s resources)
@@ -127,13 +123,23 @@ jobs:
             -backend-config="region=${{ secrets.AWS_REGION }}" \
             -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate"
 
+      - name: Resolve image URI
+        id: resolve_image
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          REGION="${{ secrets.AWS_REGION }}"
+          REPO="${{ secrets.PROJECT_NAME }}-app"
+          TAG="${{ github.sha }}"
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:${TAG}"
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
       - name: Terraform Apply
         working-directory: terraform
         run: |
           terraform apply -auto-approve \
             -var="project_name=${{ secrets.PROJECT_NAME }}" \
             -var="aws_region=${{ secrets.AWS_REGION }}" \
-            -var="image_uri=${{ needs.build.outputs.image_uri }}"
+            -var="image_uri=${{ steps.resolve_image.outputs.image_uri }}"
 
   # 
   # VERIFY - hit the public endpoint
